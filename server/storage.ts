@@ -8,8 +8,10 @@ import {
 } from "@shared/schema";
 import session from "express-session";
 import createMemoryStore from "memorystore";
-
-const MemoryStore = createMemoryStore(session);
+import { db } from "./db";
+import { eq } from "drizzle-orm";
+import connectPg from "connect-pg-simple";
+import { pool } from "./db";
 
 // Interface for storage operations
 export interface IStorage {
@@ -29,7 +31,77 @@ export interface IStorage {
   sessionStore: session.SessionStore;
 }
 
-// In-memory storage implementation
+// Session store setup
+const MemoryStore = createMemoryStore(session);
+const PostgresSessionStore = connectPg(session);
+
+// Database storage implementation
+export class DatabaseStorage implements IStorage {
+  sessionStore: session.SessionStore;
+
+  constructor() {
+    this.sessionStore = new PostgresSessionStore({ 
+      pool, 
+      createTableIfMissing: true 
+    });
+  }
+
+  // User operations
+  async getUser(id: number): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user || undefined;
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values(insertUser)
+      .returning();
+    return user;
+  }
+
+  // Drawing operations
+  async getDrawings(userId: number): Promise<Drawing[]> {
+    return await db.select().from(drawings).where(eq(drawings.userId, userId));
+  }
+
+  async getDrawing(id: number): Promise<Drawing | undefined> {
+    const [drawing] = await db.select().from(drawings).where(eq(drawings.id, id));
+    return drawing || undefined;
+  }
+
+  async createDrawing(userId: number, insertDrawing: InsertDrawing): Promise<Drawing> {
+    const [drawing] = await db
+      .insert(drawings)
+      .values({ ...insertDrawing, userId })
+      .returning();
+    return drawing;
+  }
+
+  async updateDrawing(id: number, updateData: Partial<InsertDrawing>): Promise<Drawing | undefined> {
+    const [updated] = await db
+      .update(drawings)
+      .set(updateData)
+      .where(eq(drawings.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteDrawing(id: number): Promise<boolean> {
+    const [deleted] = await db
+      .delete(drawings)
+      .where(eq(drawings.id, id))
+      .returning();
+    return !!deleted;
+  }
+}
+
+// In-memory storage implementation (kept for reference)
 export class MemStorage implements IStorage {
   private users: Map<number, User>;
   private drawings: Map<number, Drawing>;
@@ -103,4 +175,5 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+// Switch to database storage
+export const storage = new DatabaseStorage();
